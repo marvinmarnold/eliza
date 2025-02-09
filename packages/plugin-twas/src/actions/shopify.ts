@@ -14,26 +14,82 @@ const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 interface ListingMetadata {
     name: string;
     pricePerToken: number;
+    currency: 'ETH' | 'USDC';
 }
 
 function parseMetadata(content: string[]): ListingMetadata {
-    const fullText = content.join('\n');
-    
-    // Helper function to extract value after a label
-    const extractValue = (text: string, label: string): string => {
-        const regex = new RegExp(`${label}:\\s*([^\\n]+)`, 'i');
-        const match = text.match(regex);
-        return match ? match[1].trim() : '';
+    const fullText = content.join(' ').replace(/\s+/g, ' ').trim();
+    const name = extractName(fullText);
+    const { price, currency } = extractPrice(fullText);
+
+    if (!name) {
+        throw new Error('Missing listing name');
+    }
+
+    if (!price) {
+        throw new Error('Missing or invalid price');
+    }
+
+    return {
+        name,
+        pricePerToken: price,
+        currency
     };
+}
 
-    // Extract name and price
-    const name = extractValue(fullText, 'Name');
+function extractName(text: string): string {
+    const tokenSectionMatch = text.match(/Token:.*?Name:\s*([^-\n]+)/i);
+    if (tokenSectionMatch?.[1]) {
+        return tokenSectionMatch[1].trim();
+    }
+
+    const namePatterns = [
+        /Name:\s*([^-\n,]+)/i,
+        /Token:\s*([^-\n,]+)/i,
+        /- Name:\s*([^-\n,]+)/i
+    ];
+
+    for (const pattern of namePatterns) {
+        const match = text.match(pattern);
+        if (match?.[1]) {
+            return match[1].trim();
+        }
+    }
+
+    return '';
+}
+
+function extractPrice(text: string): { price: number; currency: 'ETH' | 'USDC' } {
+    const formatPrice = (numStr: string): number => {
+        const num = parseInt(numStr, 10);
+        if (isNaN(num)) return 0;
+        return num < 1000 ? num / 1000 : num;
+    };
     
-    // Extract price (USDC)
-    const priceMatch = fullText.match(/Price per token:\s*([\d.]+)\s*USDC/);
-    const pricePerToken = priceMatch ? parseFloat(priceMatch[1]) : 0;
+    const ethMatch = text.match(/0(\d{2})\s*ETH/i);
+    if (ethMatch) {
+        const price = formatPrice(ethMatch[1]);
+        if (price > 0) {
+            return { price, currency: 'ETH' };
+        }
+    }
 
-    return { name, pricePerToken };
+    const usdcPatterns = [
+        /Price.*?:\s*0?(\d{2,})\s*USDC/i,
+        /0?(\d{2,})\s*USDC/i
+    ];
+
+    for (const pattern of usdcPatterns) {
+        const match = text.match(pattern);
+        if (match?.[1]) {
+            const price = formatPrice(match[1]);
+            if (price > 0) {
+                return { price, currency: 'USDC' };
+            }
+        }
+    }
+
+    return { price: 0, currency: 'USDC' };
 }
 
 async function createShopifyProduct(content: string[]): Promise<boolean> {
@@ -45,8 +101,8 @@ async function createShopifyProduct(content: string[]): Promise<boolean> {
         const metadata = parseMetadata(content);
 
         const productData = {
-            title: `${metadata.name}`,
-            body_html: `<p>Price per Token: ${metadata.pricePerToken} USDC</p>`,
+            title: metadata.name,
+            body_html: `<p>Price per Token: ${metadata.pricePerToken} ${metadata.currency}</p>`,
             vendor: "TWAS Protocol",
             product_type: "Listing",
             status: "active",
@@ -80,7 +136,6 @@ async function createShopifyProduct(content: string[]): Promise<boolean> {
 
         return true;
     } catch (error) {
-        console.error('Error creating Shopify product:', error);
         return false;
     }
 }
