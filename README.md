@@ -6,9 +6,9 @@ Build for Autonome:
 ```
 # Create the builder
 docker buildx create --use --bootstrap \
-  --name testbuilder6 \
+  --name testbuilder8 \
   --driver docker-container \
-  --driver-opt cpuset-cpus="0-12" \
+  --driver-opt cpuset-cpus="6-12" \
   --driver-opt memory=25g \
   --config ./buildkitd.toml
 
